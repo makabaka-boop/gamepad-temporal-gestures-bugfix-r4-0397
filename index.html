@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logical Gamepad Mapper</title>
+    <link rel="stylesheet" href="./src/demo/styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>逻辑手柄映射</h1>
+        <p>最多 4 个浏览器手柄 → 逻辑动作；仅记录动作状态变化。</p>
+      </header>
+
+      <section class="grid">
+        <form id="config-form">
+          <h2>配置</h2>
+          <label>
+            轴死区
+            <input id="deadzone" type="number" min="0" max="1" step="0.01" value="0.10" />
+          </label>
+          <label>
+            释放迟滞
+            <input id="hysteresis" type="number" min="0" max="1" step="0.01" value="0.03" />
+          </label>
+          <button type="submit">应用配置（开启新日志代次）</button>
+          <button id="calibrate" type="button">以当前值校准 0 号手柄 X 轴中心</button>
+        </form>
+
+        <section>
+          <h2>录制与回放</h2>
+          <div class="buttons">
+            <button id="record">开始录制</button>
+            <button id="stop" disabled>停止</button>
+            <button id="step" disabled>单步回放</button>
+            <button id="export" disabled>导出 JSON</button>
+          </div>
+          <p>当前代次：<strong id="generation">1</strong></p>
+          <pre id="replay-state">尚未回放</pre>
+        </section>
+      </section>
+
+      <section>
+        <h2>当前逻辑状态</h2>
+        <ul id="active-actions"></ul>
+      </section>
+
+      <section>
+        <h2>事件日志</h2>
+        <pre id="events">[]</pre>
+      </section>
+    </main>
+    <script type="module" src="./src/demo/main.ts"></script>
+  </body>
+</html>
