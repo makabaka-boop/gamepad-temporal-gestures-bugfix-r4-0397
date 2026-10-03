@@ -12,7 +12,8 @@ import type { GamepadMappingConfig } from './types';
  * start and zero-based, making exports independent of the machine clock.
  */
 export class EventRecorder {
-  private events: CanonicalActionEvent[] = [];
+  private events: Array<CanonicalActionEvent & { seq: number }> = [];
+  private seq = 0;
   private recording = false;
   private startTime = 0;
   private generation = 1;
@@ -40,6 +41,7 @@ export class EventRecorder {
 
   start(): void {
     this.events = [];
+    this.seq = 0;
     this.generation = this.poller.getGeneration();
     this.startTime = this.now();
     this.recording = true;
@@ -51,10 +53,14 @@ export class EventRecorder {
   }
 
   exportLog(): CanonicalEventLog {
+    // Sort by timestamp, then by emission order. The tiebreak matters within one
+    // poll batch (e.g. a release immediately followed by another down at the
+    // same clock tick): replay must reproduce exactly what live listeners saw.
+    const sorted = [...this.events].sort((a, b) => a.t - b.t || a.seq - b.seq);
     return {
       schema: 'logical-gamepad-events/v1',
       generation: this.generation,
-      events: [...this.events].sort((a, b) => a.t - b.t || a.action.localeCompare(b.action) || b.type.localeCompare(a.type)).map((event) => ({
+      events: sorted.map((event) => ({
         action: event.action,
         t: event.t,
         type: event.type,
@@ -75,6 +81,7 @@ export class EventRecorder {
     if (!this.recording) return;
     this.generation = event.generation;
     this.events.push({
+      seq: this.seq++,
       t: Math.max(0, event.time - this.startTime),
       type: event.type === 'action-down' ? 'down' : 'up',
       action: event.action,
@@ -165,6 +172,8 @@ export function validateEventLog(log: unknown): asserts log is CanonicalEventLog
   }
   if (!Array.isArray(candidate.events)) throw new TypeError('Event log events must be an array');
 
+  const active = new Set<string>();
+  let lastGeneration = 0;
   for (const event of candidate.events) {
     if (!event || typeof event !== 'object') throw new TypeError('Each event must be an object');
     if (typeof event.action !== 'string' || event.action.length === 0) {
@@ -178,6 +187,19 @@ export function validateEventLog(log: unknown): asserts log is CanonicalEventLog
     }
     if (!Number.isInteger(event.generation) || event.generation < 1) {
       throw new TypeError('Each event requires a positive generation');
+    }
+    // A configuration boundary releases every old action implicitly.
+    if (event.generation !== lastGeneration) {
+      active.clear();
+      lastGeneration = event.generation;
+    }
+    if (event.type === 'down') {
+      if (active.has(event.action)) {
+        throw new TypeError(`Duplicate action-down for ${event.action} without an up`);
+      }
+      active.add(event.action);
+    } else if (!active.delete(event.action)) {
+      throw new TypeError(`action-up for ${event.action} without a matching down`);
     }
   }
 }

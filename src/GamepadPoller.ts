@@ -127,6 +127,8 @@ export class GamepadPoller {
         } else {
           // Browser already emitted disconnect; a still-present snapshot is stale.
           skipped.add(index);
+          // Pending taps / holds must not resolve against the ghost snapshot.
+          this.gestures.resetPad(index);
         }
       }
       const desired = gamepad?.connected && !skipped.has(index) ? gamepad : undefined;
@@ -224,10 +226,14 @@ export class GamepadPoller {
     for (const key of [...this.axisActive.keys()]) {
       if (key.startsWith(`${index}:`)) this.axisActive.delete(key);
     }
+    // In-flight gesture timing (pending taps, armed doubles, holds) belongs to
+    // this session and must never fire in a later one.
+    this.gestures.resetPad(index);
     this.sessions.delete(index);
   }
 
   private reconcile(snapshot: GamepadSnapshot, skipped: ReadonlySet<number>): LogicalActionEvent[] {
+    const now = this.now();
     this.readPhysicalInputs(snapshot, skipped);
     const candidates = this.buildCandidates();
     const selected = this.selectCandidates(candidates);
@@ -237,16 +243,16 @@ export class GamepadPoller {
       else for (const source of state.sources) claimed.add(source);
     }
     const groups = gestureGroups(this.config.bindings, this.sessions).filter(g => !skipped.has(g.pad));
-    const result = this.gestures.update(groups, new Set(this.physical.keys()), claimed, this.now());
+    const result = this.gestures.update(groups, new Set(this.physical.keys()), claimed, now);
     for (const hold of result.holds) {
       const state = selected.get(hold.action) ?? { pads: new Set<number>(), sources: new Set<string>() };
       state.pads.add(hold.pad); state.sources.add(hold.key); selected.set(hold.action, state);
     }
-    const events = this.applySelection(selected);
+    const events = this.applySelection(selected, now);
     for (const pulse of result.pulses) {
       if (selected.has(pulse.action)) continue;
       for (const type of ['action-down','action-up'] as const) {
-        const event: LogicalActionEvent = { type, action: pulse.action, sources: [pulse.key], time: this.now(), generation: this.generation };
+        const event: LogicalActionEvent = { type, action: pulse.action, sources: [pulse.key], time: now, generation: this.generation };
         events.push(event); this.dispatchEvent(event);
       }
     }
@@ -351,7 +357,7 @@ export class GamepadPoller {
     return selected;
   }
 
-  private applySelection(next: Map<string, ActiveAction>): LogicalActionEvent[] {
+  private applySelection(next: Map<string, ActiveAction>, now: number): LogicalActionEvent[] {
     const events: LogicalActionEvent[] = [];
     const dispatch = (event: LogicalActionEvent): void => {
       events.push(event);
@@ -364,7 +370,7 @@ export class GamepadPoller {
           type: 'action-up',
           action,
           generation: this.generation,
-          time: this.now(),
+          time: now,
           sources: [...state.sources].sort(),
         });
       }
@@ -377,7 +383,7 @@ export class GamepadPoller {
           type: 'action-down',
           action,
           generation: this.generation,
-          time: this.now(),
+          time: now,
           sources: [...state.sources].sort(),
         });
       } else {
